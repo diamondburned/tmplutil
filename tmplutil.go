@@ -11,6 +11,9 @@ import (
 	"github.com/phogolabs/parcello"
 )
 
+// Log, if true, will log all erroneous renders to stderr.
+var Log = false
+
 // Templater describes the template information to be constructed.
 type Templater struct {
 	Includes  map[string]string // name -> path
@@ -29,7 +32,15 @@ func (tmpler *Templater) Register(name, path string) *Subtemplate {
 // Execute executes any subtemplate.
 func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
 	tmpler.Preload()
-	return tmpler.tmpl.ExecuteTemplate(w, tmpl, v)
+
+	if err := tmpler.tmpl.ExecuteTemplate(w, tmpl, v); err != nil {
+		if Log {
+			log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
+		}
+		return err
+	}
+
+	return nil
 }
 
 // Func registers a function.
@@ -63,8 +74,7 @@ type Subtemplate struct {
 
 // Execute executes the subtemplate.
 func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
-	sub.tmpl.Preload()
-	return sub.tmpl.tmpl.ExecuteTemplate(w, sub.name, v)
+	return sub.tmpl.Execute(w, sub.name, v)
 }
 
 func readFile(filePath string) string {
