@@ -3,12 +3,12 @@ package tmplutil
 import (
 	"html/template"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
-
-	"github.com/phogolabs/parcello"
 )
 
 // Log, if true, will log all erroneous renders to stderr.
@@ -16,6 +16,10 @@ var Log = false
 
 // Templater describes the template information to be constructed.
 type Templater struct {
+	// FileSystem is the filesystem to look up templates from. It must not be
+	// nil.
+	FileSystem fs.FS
+
 	Includes  map[string]string // name -> path
 	Functions template.FuncMap
 
@@ -23,10 +27,90 @@ type Templater struct {
 	once sync.Once
 }
 
-// Register registers a subtemplate.
+// HTMLExtensions is the list of HTML file extensions that files must have to be
+// considered a template.
+var HTMLExtensions = []string{".html", ".htm"}
+
+func isHTML(path string) bool {
+	pathExt := filepath.Ext(path)
+
+	for _, ext := range HTMLExtensions {
+		if ext == pathExt {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Preregister registers all templates with the filetype ".html" and ".htm" from
+// the given FileSystem. The basename without the file extension will be used,
+// and duplicated names will be ignored.
+//
+// Use the Subtemplate method to get the subtemplate, or call Register with an
+// empty path.
+//
+// The list of valid filetypes to be considered templates can be changed in
+// tmplutil.HTMLExtensions.
+func Preregister(tmpler *Templater) *Templater {
+	err := fs.WalkDir(tmpler.FileSystem, ".",
+		func(fullPath string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+
+			name := d.Name()
+			if !isHTML(name) {
+				return nil
+			}
+
+			name = filepath.Base(name)
+			name = strings.TrimSuffix(name, filepath.Ext(name))
+
+			if _, ok := tmpler.Includes[name]; ok {
+				return nil
+			}
+
+			if Log {
+				log.Println("Pre-registering", fullPath, "at", fullPath)
+			}
+
+			tmpler.Includes[name] = fullPath
+			return nil
+		},
+	)
+
+	if err != nil {
+		log.Fatalln("failed to glob:", err)
+	}
+
+	return tmpler
+}
+
+// Register registers a subtemplate. If a template is already not
+// pre-registered, then it is registered. Otherwise, the pre-registered template
+// is used.
 func (tmpler *Templater) Register(name, path string) *Subtemplate {
-	tmpler.Includes[name] = path
+	path, ok := tmpler.Includes[name]
+	if !ok {
+		if Log {
+			log.Println("Registering", path)
+		}
+
+		tmpler.Includes[name] = path
+	}
+
 	return &Subtemplate{tmpler, name}
+}
+
+// Subtemplate returns a registered subtemplate. Nil is returned otherwise.
+func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
+	_, ok := tmpler.Includes[name]
+	if ok {
+		return &Subtemplate{tmpler, name}
+	}
+
+	return nil
 }
 
 // Execute executes any subtemplate.
@@ -46,7 +130,7 @@ func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error 
 // Func registers a function.
 func (tmpler *Templater) Func(name string, fn interface{}) {
 	if _, ok := tmpler.Functions[name]; ok {
-		panic("Duplicate function with name " + name)
+		log.Panicln("error: duplicate function with name", name)
 	}
 	tmpler.Functions[name] = fn
 }
@@ -58,7 +142,7 @@ func (tmpler *Templater) Preload() {
 		tmpl := template.New("")
 		tmpl = tmpl.Funcs(tmpler.Functions)
 		for name, incl := range tmpler.Includes {
-			tmpl = template.Must(tmpl.New(name).Parse(readFile(incl)))
+			tmpl = template.Must(tmpl.New(name).Parse(readFile(tmpler.FileSystem, incl)))
 		}
 
 		tmpler.tmpl = *tmpl
@@ -77,16 +161,20 @@ func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
 	return sub.tmpl.Execute(w, sub.name, v)
 }
 
-func readFile(filePath string) string {
-	f, err := parcello.Open(filePath)
+// MustSubFS forces creation of a sub-filesystem using fs.Sub. It panics on
+// errors.
+func MustSub(fsys fs.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		log.Fatalln("Failed to open file:", err)
+		log.Panicln(err)
 	}
-	defer f.Close()
+	return sub
+}
 
-	b, err := ioutil.ReadAll(f)
+func readFile(fsys fs.FS, filePath string) string {
+	b, err := fs.ReadFile(fsys, filePath)
 	if err != nil {
-		log.Fatalln("Failed to read file:", err)
+		log.Fatalln("failed to read file:", err)
 	}
 
 	return string(b)
