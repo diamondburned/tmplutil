@@ -1,17 +1,18 @@
 # tmplutil
 
-A small `html/template` helper package to combine with
-[Parcello](https://github.com/phogolabs/parcello).
+A small `html/template` helper package to combine with `go:embed`.
 
 ## Usage
 
 ```go
 package web
 
-//go:generate go run github.com/phogolabs/parcello/cmd/parcello -r -i *.go
+//go:embed *
+var webFS embed.FS
 
 // Templater is the global template tree.
 var Templater = tmplutil.Templater{
+	FileSystem: webFS,
 	Includes: map[string]string{
 		"css":    "components/css.html",
 		"header": "components/header.html",
@@ -37,4 +38,4 @@ func render(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-To update templates, run `go generate ./...`.
+The templates are updated on build/run.
