@@ -99,7 +99,7 @@ func (tmpler *Templater) OnRenderFail(f RenderFailFunc) {
 }
 
 func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
-	if err == nil || tmpler.renderFail == nil {
+	if err == nil {
 		return
 	}
 
@@ -107,7 +107,9 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 		log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
 	}
 
-	tmpler.renderFail(w, tmpl, err)
+	if tmpler.renderFail != nil {
+		tmpler.renderFail(w, tmpl, err)
+	}
 }
 
 // Register registers a subtemplate. If a template is already not
