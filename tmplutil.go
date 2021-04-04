@@ -114,8 +114,7 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 // pre-registered, then it is registered. Otherwise, the pre-registered template
 // is used.
 func (tmpler *Templater) Register(name, path string) *Subtemplate {
-	path, ok := tmpler.Includes[name]
-	if !ok {
+	if _, ok := tmpler.Includes[name]; !ok {
 		if Log {
 			log.Println("Registering", path)
 		}
