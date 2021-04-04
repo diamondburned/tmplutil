@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-// Log, if true, will log all erroneous renders to stderr.
+// Log, if true, will log additional verbose information.
 var Log = false
 
 // Templater describes the template information to be constructed.
@@ -23,8 +23,9 @@ type Templater struct {
 	Includes  map[string]string // name -> path
 	Functions template.FuncMap
 
-	tmpl template.Template
-	once sync.Once
+	renderFail RenderFailFunc
+	tmpl       template.Template
+	once       sync.Once
 }
 
 // HTMLExtensions is the list of HTML file extensions that files must have to be
@@ -72,7 +73,7 @@ func Preregister(tmpler *Templater) *Templater {
 			}
 
 			if Log {
-				log.Println("Pre-registering", fullPath, "at", fullPath)
+				log.Println("Pre-registering", name, "at", fullPath)
 			}
 
 			tmpler.Includes[name] = fullPath
@@ -85,6 +86,28 @@ func Preregister(tmpler *Templater) *Templater {
 	}
 
 	return tmpler
+}
+
+// RenderFailFunc is the function that's called when a template render fails.
+// Refer to OnRenderFail.
+type RenderFailFunc func(w io.Writer, tmpl string, err error)
+
+// OnRenderFail sets the render fail function that would be called when a
+// template render fails. The given writer is the request's writer.
+func (tmpler *Templater) OnRenderFail(f RenderFailFunc) {
+	tmpler.renderFail = f
+}
+
+func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
+	if err == nil || tmpler.renderFail == nil {
+		return
+	}
+
+	if Log {
+		log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
+	}
+
+	tmpler.renderFail(w, tmpl, err)
 }
 
 // Register registers a subtemplate. If a template is already not
@@ -118,9 +141,7 @@ func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error 
 	tmpler.Preload()
 
 	if err := tmpler.tmpl.ExecuteTemplate(w, tmpl, v); err != nil {
-		if Log {
-			log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
-		}
+		tmpler.onRenderFail(w, tmpl, err)
 		return err
 	}
 
@@ -158,7 +179,9 @@ type Subtemplate struct {
 
 // Execute executes the subtemplate.
 func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
-	return sub.tmpl.Execute(w, sub.name, v)
+	err := sub.tmpl.Execute(w, sub.name, v)
+	sub.tmpl.onRenderFail(w, sub.name, err)
+	return err
 }
 
 // MustSubFS forces creation of a sub-filesystem using fs.Sub. It panics on
