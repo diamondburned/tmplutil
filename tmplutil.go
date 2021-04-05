@@ -1,6 +1,7 @@
 package tmplutil
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -14,7 +15,12 @@ import (
 // Log, if true, will log additional verbose information.
 var Log = false
 
-// Templater describes the template information to be constructed.
+// Templater describes the template information to be constructed. Methods
+// called on Templater is NOT thread-safe, so it should only be called primarily
+// from the global scope or init.
+//
+// Templater must not be changed after it has been preloaded or executed. Doing
+// so after is undefined behavior and will trigger race conditions.
 type Templater struct {
 	// FileSystem is the filesystem to look up templates from. It must not be
 	// nil.
@@ -127,19 +133,23 @@ func (tmpler *Templater) Register(name, path string) *Subtemplate {
 	return &Subtemplate{tmpler, name}
 }
 
-// Subtemplate returns a registered subtemplate. Nil is returned otherwise.
+// Subtemplate returns a registered subtemplate. If the template isn't yet
+// registered, a subtemplate instance will still be returned, but executing it
+// will return an error.
 func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
-	_, ok := tmpler.Includes[name]
-	if ok {
-		return &Subtemplate{tmpler, name}
-	}
-
-	return nil
+	return &Subtemplate{tmpler, name}
 }
 
 // Execute executes any subtemplate.
 func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
 	tmpler.Preload()
+
+	// Ensure the name is valid.
+	if _, ok := tmpler.Includes[tmpl]; !ok {
+		err := fmt.Errorf("unknown template %s", tmpl)
+		tmpler.onRenderFail(w, tmpl, err)
+		return err
+	}
 
 	if err := tmpler.tmpl.ExecuteTemplate(w, tmpl, v); err != nil {
 		tmpler.onRenderFail(w, tmpl, err)
@@ -149,7 +159,8 @@ func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error 
 	return nil
 }
 
-// Func registers a function.
+// Func registers a function; it should only be called before preloading. The
+// function will panic if there's a duplicate function.
 func (tmpler *Templater) Func(name string, fn interface{}) {
 	if _, ok := tmpler.Functions[name]; ok {
 		log.Panicln("error: duplicate function with name", name)
