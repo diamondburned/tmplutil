@@ -104,6 +104,14 @@ func (tmpler *Templater) OnRenderFail(f RenderFailFunc) {
 	tmpler.renderFail = f
 }
 
+// failWriter wraps around the writer to be used within onRenderFail to break
+// the recursion chain.
+type failWriter struct{ w io.Writer }
+
+func (w failWriter) Write(b []byte) (int, error) {
+	return w.w.Write(b)
+}
+
 func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 	if err == nil {
 		return
@@ -114,7 +122,14 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 	}
 
 	if tmpler.renderFail != nil {
-		tmpler.renderFail(w, tmpl, err)
+		// Check if we're already in an onRenderFail callchain by checking if the
+		// writer is wrapped.
+		if _, ok := w.(failWriter); ok {
+			// Break the callchain if yes to avoid recursion loops.
+			return
+		}
+
+		tmpler.renderFail(failWriter{w}, tmpl, err)
 	}
 }
 
