@@ -1,7 +1,6 @@
 package tmplutil
 
 import (
-	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -159,13 +158,6 @@ func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
 func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
 	tmpler.Preload()
 
-	// Ensure the name is valid.
-	if _, ok := tmpler.Includes[tmpl]; !ok {
-		err := fmt.Errorf("unknown template %s", tmpl)
-		tmpler.onRenderFail(w, tmpl, err)
-		return err
-	}
-
 	if err := tmpler.tmpl.ExecuteTemplate(w, tmpl, v); err != nil {
 		tmpler.onRenderFail(w, tmpl, err)
 		return err
@@ -194,7 +186,6 @@ func (tmpler *Templater) Preload() {
 		}
 
 		tmpler.tmpl = *tmpl
-		tmpler.Includes = nil
 	})
 }
 
