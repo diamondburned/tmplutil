@@ -1,6 +1,7 @@
 package tmplutil
 
 import (
+	"errors"
 	"html/template"
 	"io"
 	"io/fs"
@@ -28,9 +29,12 @@ type Templater struct {
 	Includes  map[string]string // name -> path
 	Functions template.FuncMap
 
-	renderFail RenderFailFunc
-	tmpl       template.Template
-	once       sync.Once
+	// OnRenderFail is called when the renderer fails. This function can be used
+	// to catch errors.
+	OnRenderFail RenderFailFunc
+
+	tmpl template.Template
+	once sync.Once
 }
 
 // HTMLExtensions is the list of HTML file extensions that files must have to be
@@ -95,20 +99,18 @@ func Preregister(tmpler *Templater) *Templater {
 
 // RenderFailFunc is the function that's called when a template render fails.
 // Refer to OnRenderFail.
-type RenderFailFunc func(w io.Writer, tmpl string, err error)
+type RenderFailFunc func(sub *Subtemplate, w io.Writer, err error)
 
-// OnRenderFail sets the render fail function that would be called when a
-// template render fails. The given writer is the request's writer.
-func (tmpler *Templater) OnRenderFail(f RenderFailFunc) {
-	tmpler.renderFail = f
+type renderFailError struct {
+	err error
 }
 
-// failWriter wraps around the writer to be used within onRenderFail to break
-// the recursion chain.
-type failWriter struct{ w io.Writer }
+func (e renderFailError) Error() string {
+	return e.err.Error()
+}
 
-func (w failWriter) Write(b []byte) (int, error) {
-	return w.w.Write(b)
+func (e renderFailError) Unwrap() error {
+	return e.err
 }
 
 func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
@@ -120,15 +122,15 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 		log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
 	}
 
-	if tmpler.renderFail != nil {
-		// Check if we're already in an onRenderFail callchain by checking if the
-		// writer is wrapped.
-		if _, ok := w.(failWriter); ok {
-			// Break the callchain if yes to avoid recursion loops.
+	if tmpler.OnRenderFail != nil {
+		var renderFail renderFailError
+		if errors.As(err, &renderFail) {
+			// Render fail cycle; exit.
 			return
 		}
 
-		tmpler.renderFail(failWriter{w}, tmpl, err)
+		sub := &Subtemplate{tmpler, tmpl}
+		tmpler.OnRenderFail(sub, w, renderFailError{err})
 	}
 }
 
@@ -195,11 +197,19 @@ type Subtemplate struct {
 	name string
 }
 
+// Templater gets the parent templater of the subtemplate.
+func (sub *Subtemplate) Templater() *Templater {
+	return sub.tmpl
+}
+
+// Name gets the subtemplate's name.
+func (sub *Subtemplate) Name() string {
+	return sub.name
+}
+
 // Execute executes the subtemplate.
 func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
-	err := sub.tmpl.Execute(w, sub.name, v)
-	sub.tmpl.onRenderFail(w, sub.name, err)
-	return err
+	return sub.tmpl.Execute(w, sub.name, v)
 }
 
 // MustSubFS forces creation of a sub-filesystem using fs.Sub. It panics on
