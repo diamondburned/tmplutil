@@ -1,7 +1,6 @@
 package tmplutil
 
 import (
-	"errors"
 	"html/template"
 	"io"
 	"io/fs"
@@ -101,17 +100,9 @@ func Preregister(tmpler *Templater) *Templater {
 // Refer to OnRenderFail.
 type RenderFailFunc func(sub *Subtemplate, w io.Writer, err error)
 
-type renderFailError struct {
-	err error
-}
-
-func (e renderFailError) Error() string {
-	return e.err.Error()
-}
-
-func (e renderFailError) Unwrap() error {
-	return e.err
-}
+// failWriter wraps around the writer to be used within onRenderFail to break
+// the recursion chain.
+type failWriter struct{ io.Writer }
 
 func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 	if err == nil {
@@ -123,14 +114,15 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 	}
 
 	if tmpler.OnRenderFail != nil {
-		var renderFail renderFailError
-		if errors.As(err, &renderFail) {
-			// Render fail cycle; exit.
+		// Check if we're already in an onRenderFail callchain by checking if the
+		// writer is wrapped.
+		if _, ok := w.(failWriter); ok {
+			// Break the callchain if yes to avoid recursion loops.
 			return
 		}
 
 		sub := &Subtemplate{tmpler, tmpl}
-		tmpler.OnRenderFail(sub, w, renderFailError{err})
+		tmpler.OnRenderFail(sub, failWriter{w}, err)
 	}
 }
 
