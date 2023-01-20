@@ -6,13 +6,20 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 )
 
-// Log, if true, will log additional verbose information.
-var Log = false
+// DebugMode, if true, will cause the following to happen:
+//
+//    - Errors and verbose template information will be logged.
+//    - The template will be reloaded on every request.
+//
+// It will be toggled true if the environment variable "TMPL_DEBUG" is set to a
+// non-empty value (e.g. 1).
+var DebugMode = os.Getenv("TMPL_DEBUG") != ""
 
 // Templater describes the template information to be constructed. Methods
 // called on Templater is NOT thread-safe, so it should only be called primarily
@@ -32,8 +39,7 @@ type Templater struct {
 	// to catch errors.
 	OnRenderFail RenderFailFunc
 
-	tmpl template.Template
-	once sync.Once
+	tmpl atomic.Value // template.Template
 }
 
 // HTMLExtensions is the list of HTML file extensions that files must have to be
@@ -80,7 +86,7 @@ func Preregister(tmpler *Templater) *Templater {
 				return nil
 			}
 
-			if Log {
+			if DebugMode {
 				log.Println("Pre-registering", name, "at", fullPath)
 			}
 
@@ -109,7 +115,7 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 		return
 	}
 
-	if Log {
+	if DebugMode {
 		log.Printf("[tmplutil] failed to render %q: %v\n", tmpl, err)
 	}
 
@@ -131,7 +137,7 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 // is used.
 func (tmpler *Templater) Register(name, path string) *Subtemplate {
 	if _, ok := tmpler.Includes[name]; !ok {
-		if Log {
+		if DebugMode {
 			log.Println("Registering", path)
 		}
 
@@ -139,6 +145,12 @@ func (tmpler *Templater) Register(name, path string) *Subtemplate {
 	}
 
 	return &Subtemplate{tmpler, name}
+}
+
+// Override overrides the template source files. It does not re-render
+// templates.
+func (tmpler *Templater) Override(overrideFS fs.FS) {
+	tmpler.FileSystem = OverrideFS(tmpler.FileSystem, overrideFS)
 }
 
 // Subtemplate returns a registered subtemplate. If the template isn't yet
@@ -150,13 +162,10 @@ func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
 
 // Execute executes any subtemplate.
 func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
-	tmpler.Preload()
-
-	if err := tmpler.tmpl.ExecuteTemplate(w, tmpl, v); err != nil {
+	if err := tmpler.Load().ExecuteTemplate(w, tmpl, v); err != nil {
 		tmpler.onRenderFail(w, tmpl, err)
 		return err
 	}
-
 	return nil
 }
 
@@ -172,15 +181,41 @@ func (tmpler *Templater) Func(name string, fn interface{}) {
 // Preload preloads the templates once. If the templates are already
 // preloaded, then it does nothing.
 func (tmpler *Templater) Preload() {
-	tmpler.once.Do(func() {
-		tmpl := template.New("")
-		tmpl = tmpl.Funcs(tmpler.Functions)
-		for name, incl := range tmpler.Includes {
-			tmpl = template.Must(tmpl.New(name).Parse(readFile(tmpler.FileSystem, incl)))
-		}
+	tmpler.Load()
+}
 
-		tmpler.tmpl = *tmpl
-	})
+// Load loads the templates. If the templates are already loaded, then it does
+// nothing.
+func (tmpler *Templater) Load() *template.Template {
+load:
+	tmpl, _ := tmpler.tmpl.Load().(*template.Template)
+	if tmpl != nil {
+		return tmpl
+	}
+
+	oldTmpl := tmpl
+
+	tmpl = template.New("")
+	tmpl = tmpl.Funcs(tmpler.Functions)
+	for name, incl := range tmpler.Includes {
+		tmpl = template.Must(tmpl.New(name).Parse(readFile(tmpler.FileSystem, incl)))
+	}
+
+	if DebugMode {
+		// Don't store into tmpler.tmpl.
+		return tmpl
+	}
+
+	if tmpler.tmpl.CompareAndSwap(oldTmpl, tmpl) {
+		return tmpl
+	}
+
+	goto load
+}
+
+// Reset resets the template to its initial state.
+func (tmpler *Templater) Reset() {
+	tmpler.tmpl.Store((*template.Template)(nil))
 }
 
 // Subtemplate describes a subtemplate that belongs to some parent template.
