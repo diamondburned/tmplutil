@@ -1,6 +1,8 @@
 package tmplutil
 
 import (
+	"bytes"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -10,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/yuin/goldmark"
 )
 
 // DebugMode, if true, will cause the following to happen:
@@ -39,12 +43,16 @@ type Templater struct {
 	// to catch errors.
 	OnRenderFail RenderFailFunc
 
-	tmpl atomic.Value // template.Template
+	// Markdown, if not nil, will allow Templater to handle rendering .md files
+	// to HTML after they're templated.
+	Markdown goldmark.Markdown
+
+	tmpl atomic.Value // htmlTemplate
 }
 
 // HTMLExtensions is the list of HTML file extensions that files must have to be
 // considered a template.
-var HTMLExtensions = []string{".html", ".htm"}
+var HTMLExtensions = []string{".html", ".htm", ".md"}
 
 func isHTML(path string) bool {
 	pathExt := filepath.Ext(path)
@@ -58,9 +66,9 @@ func isHTML(path string) bool {
 	return false
 }
 
-// Preregister registers all templates with the filetype ".html" and ".htm" from
-// the given FileSystem. The basename without the file extension will be used,
-// and duplicated names will be ignored.
+// Preregister registers all templates with the filetype ".html", ".htm" and
+// ".md" from the given FileSystem. The basename without the file extension will
+// be used, and duplicated names will be ignored.
 //
 // Use the Subtemplate method to get the subtemplate, or call Register with an
 // empty path.
@@ -160,12 +168,34 @@ func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
 	return &Subtemplate{tmpler, name}
 }
 
-// Execute executes any subtemplate.
-func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
+func (tmpler *Templater) execute(w io.Writer, tmpl string, v interface{}) error {
 	if err := tmpler.Load().ExecuteTemplate(w, tmpl, v); err != nil {
 		tmpler.onRenderFail(w, tmpl, err)
 		return err
 	}
+	return nil
+}
+
+// Execute executes any subtemplate.
+func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
+	if tmpler.Markdown != nil && filepath.Ext(tmpler.Includes[tmpl]) == ".md" {
+		var out bytes.Buffer
+		if err := tmpler.execute(&out, tmpl, v); err != nil {
+			return err
+		}
+
+		if err := tmpler.Markdown.Convert(out.Bytes(), w); err != nil {
+			tmpler.onRenderFail(w, tmpl, fmt.Errorf("failed to convert markdown: %w", err))
+			return err
+		}
+
+		return nil
+	}
+
+	if err := tmpler.execute(w, tmpl, v); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -2,4 +2,4 @@ module github.com/diamondburned/tmplutil
 
 go 1.16
 
-require github.com/phogolabs/parcello v0.8.2
+require github.com/yuin/goldmark v1.5.3
