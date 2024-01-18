@@ -9,13 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 )
 
 // DebugMode, if true, will cause the following to happen:
 //
-//    - Errors and verbose template information will be logged.
-//    - The template will be reloaded on every request.
+//   - Errors and verbose template information will be logged.
+//   - The template will be reloaded on every request.
 //
 // It will be toggled true if the environment variable "TMPL_DEBUG" is set to a
 // non-empty value (e.g. 1).
@@ -39,7 +39,8 @@ type Templater struct {
 	// to catch errors.
 	OnRenderFail RenderFailFunc
 
-	tmpl atomic.Value // template.Template
+	tmpl     *template.Template
+	tmplOnce sync.Once
 }
 
 // HTMLExtensions is the list of HTML file extensions that files must have to be
@@ -187,35 +188,27 @@ func (tmpler *Templater) Preload() {
 // Load loads the templates. If the templates are already loaded, then it does
 // nothing.
 func (tmpler *Templater) Load() *template.Template {
-load:
-	tmpl, _ := tmpler.tmpl.Load().(*template.Template)
-	if tmpl != nil {
+	parse := func() *template.Template {
+		tmpl := template.New("")
+		tmpl = tmpl.Funcs(tmpler.Functions)
+		for name, incl := range tmpler.Includes {
+			tmpl = template.Must(tmpl.New(name).Parse(readFile(tmpler.FileSystem, incl)))
+		}
 		return tmpl
-	}
-
-	oldTmpl := tmpl
-
-	tmpl = template.New("")
-	tmpl = tmpl.Funcs(tmpler.Functions)
-	for name, incl := range tmpler.Includes {
-		tmpl = template.Must(tmpl.New(name).Parse(readFile(tmpler.FileSystem, incl)))
 	}
 
 	if DebugMode {
-		// Don't store into tmpler.tmpl.
-		return tmpl
+		return parse()
 	}
 
-	if tmpler.tmpl.CompareAndSwap(oldTmpl, tmpl) {
-		return tmpl
-	}
-
-	goto load
+	tmpler.tmplOnce.Do(func() { tmpler.tmpl = parse() })
+	return tmpler.tmpl
 }
 
 // Reset resets the template to its initial state.
 func (tmpler *Templater) Reset() {
-	tmpler.tmpl.Store((*template.Template)(nil))
+	tmpler.tmpl = nil
+	tmpler.tmplOnce = sync.Once{}
 }
 
 // Subtemplate describes a subtemplate that belongs to some parent template.
