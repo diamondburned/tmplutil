@@ -1,4 +1,4 @@
-module github.com/diamondburned/tmplutil
+module libdb.so/tmplutil
 
 go 1.16
 
