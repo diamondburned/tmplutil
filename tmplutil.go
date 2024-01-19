@@ -1,6 +1,7 @@
 package tmplutil
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -61,45 +62,60 @@ func isHTML(path string) bool {
 
 // Preregister registers all templates with the filetype ".html" and ".htm" from
 // the given FileSystem. The basename without the file extension will be used,
-// and duplicated names will be ignored.
+// and duplicated names will be ignored. If no paths are given, then the current
+// directory is used.
 //
 // Use the Subtemplate method to get the subtemplate, or call Register with an
 // empty path.
 //
 // The list of valid filetypes to be considered templates can be changed in
 // tmplutil.HTMLExtensions.
-func Preregister(tmpler *Templater) *Templater {
-	err := fs.WalkDir(tmpler.FileSystem, ".",
-		func(fullPath string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-
-			name := d.Name()
-			if !isHTML(name) {
-				return nil
-			}
-
-			name = filepath.Base(name)
-			name = strings.TrimSuffix(name, filepath.Ext(name))
-
-			if _, ok := tmpler.Includes[name]; ok {
-				return nil
-			}
-
-			if DebugMode {
-				log.Println("Pre-registering", name, "at", fullPath)
-			}
-
-			tmpler.Includes[name] = fullPath
-			return nil
-		},
-	)
-
-	if err != nil {
-		log.Fatalln("failed to glob:", err)
+func (tmpler *Templater) Preregister(paths ...string) error {
+	if len(paths) == 0 {
+		paths = []string{"."}
 	}
 
+	walkFn := func(fullPath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		name := d.Name()
+		if !isHTML(name) {
+			return nil
+		}
+
+		name = filepath.Base(name)
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+
+		if _, ok := tmpler.Includes[name]; ok {
+			return nil
+		}
+
+		if DebugMode {
+			log.Println("Pre-registering", name, "at", fullPath)
+		}
+
+		tmpler.Includes[name] = fullPath
+		return nil
+	}
+
+	for _, path := range paths {
+		if err := fs.WalkDir(tmpler.FileSystem, path, walkFn); err != nil {
+			return fmt.Errorf("failed to walk directory %q: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// Preregister calls [tmpler.Preregister]. It panics on errors.
+//
+// Deprecated: Use [tmpler.Preregister] instead.
+func Preregister(tmpler *Templater) *Templater {
+	if err := tmpler.Preregister(); err != nil {
+		log.Panicln(err)
+	}
 	return tmpler
 }
 
