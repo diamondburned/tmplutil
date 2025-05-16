@@ -1,6 +1,7 @@
 package tmplutil
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"io"
@@ -121,13 +122,13 @@ func Preregister(tmpler *Templater) *Templater {
 
 // RenderFailFunc is the function that's called when a template render fails.
 // Refer to OnRenderFail.
-type RenderFailFunc func(sub *Subtemplate, w io.Writer, err error)
+type RenderFailFunc func(ctx context.Context, sub *Subtemplate, w io.Writer, err error)
 
 // failWriter wraps around the writer to be used within onRenderFail to break
 // the recursion chain.
 type failWriter struct{ io.Writer }
 
-func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
+func (tmpler *Templater) onRenderFail(ctx context.Context, w io.Writer, tmpl string, err error) {
 	if err == nil {
 		return
 	}
@@ -145,7 +146,7 @@ func (tmpler *Templater) onRenderFail(w io.Writer, tmpl string, err error) {
 		}
 
 		sub := &Subtemplate{tmpler, tmpl}
-		tmpler.OnRenderFail(sub, failWriter{w}, err)
+		tmpler.OnRenderFail(ctx, sub, failWriter{w}, err)
 	}
 }
 
@@ -178,18 +179,18 @@ func (tmpler *Templater) Subtemplate(name string) *Subtemplate {
 }
 
 // Execute executes any subtemplate.
-func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error {
+func (tmpler *Templater) Execute(ctx context.Context, w io.Writer, tmpl string, v interface{}) error {
 	if err := tmpler.Load().ExecuteTemplate(w, tmpl, v); err != nil {
-		tmpler.onRenderFail(w, tmpl, err)
+		tmpler.onRenderFail(ctx, w, tmpl, err)
 		return err
 	}
 	return nil
 }
 
 // ExecuteString executes a template into a string.
-func (tmpler *Templater) ExecuteString(tmpl string, v interface{}) (template.HTML, error) {
+func (tmpler *Templater) ExecuteString(ctx context.Context, tmpl string, v interface{}) (template.HTML, error) {
 	var buf strings.Builder
-	err := tmpler.Execute(&buf, tmpl, v)
+	err := tmpler.Execute(ctx, &buf, tmpl, v)
 	return template.HTML(buf.String()), err
 }
 
@@ -251,13 +252,13 @@ func (sub *Subtemplate) Name() string {
 }
 
 // Execute executes the subtemplate.
-func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
-	return sub.tmpl.Execute(w, sub.name, v)
+func (sub *Subtemplate) Execute(ctx context.Context, w io.Writer, v interface{}) error {
+	return sub.tmpl.Execute(ctx, w, sub.name, v)
 }
 
 // ExecuteString executes the subtemplate into a string.
-func (sub *Subtemplate) ExecuteString(v interface{}) (template.HTML, error) {
-	return sub.tmpl.ExecuteString(sub.name, v)
+func (sub *Subtemplate) ExecuteString(ctx context.Context, v interface{}) (template.HTML, error) {
+	return sub.tmpl.ExecuteString(ctx, sub.name, v)
 }
 
 // MustSubFS forces creation of a sub-filesystem using fs.Sub. It panics on
