@@ -187,10 +187,10 @@ func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error 
 }
 
 // ExecuteString executes a template into a string.
-func (tmpler *Templater) ExecuteString(tmpl string, v interface{}) (string, error) {
+func (tmpler *Templater) ExecuteString(tmpl string, v interface{}) (template.HTML, error) {
 	var buf strings.Builder
 	err := tmpler.Execute(&buf, tmpl, v)
-	return buf.String(), err
+	return template.HTML(buf.String()), err
 }
 
 // Func registers a function; it should only be called before preloading. The
@@ -256,7 +256,7 @@ func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
 }
 
 // ExecuteString executes the subtemplate into a string.
-func (sub *Subtemplate) ExecuteString(v interface{}) (string, error) {
+func (sub *Subtemplate) ExecuteString(v interface{}) (template.HTML, error) {
 	return sub.tmpl.ExecuteString(sub.name, v)
 }
 
