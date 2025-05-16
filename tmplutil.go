@@ -186,6 +186,13 @@ func (tmpler *Templater) Execute(w io.Writer, tmpl string, v interface{}) error 
 	return nil
 }
 
+// ExecuteString executes a template into a string.
+func (tmpler *Templater) ExecuteString(tmpl string, v interface{}) (string, error) {
+	var buf strings.Builder
+	err := tmpler.Execute(&buf, tmpl, v)
+	return buf.String(), err
+}
+
 // Func registers a function; it should only be called before preloading. The
 // function will panic if there's a duplicate function.
 func (tmpler *Templater) Func(name string, fn interface{}) {
@@ -246,6 +253,11 @@ func (sub *Subtemplate) Name() string {
 // Execute executes the subtemplate.
 func (sub *Subtemplate) Execute(w io.Writer, v interface{}) error {
 	return sub.tmpl.Execute(w, sub.name, v)
+}
+
+// ExecuteString executes the subtemplate into a string.
+func (sub *Subtemplate) ExecuteString(v interface{}) (string, error) {
+	return sub.tmpl.ExecuteString(sub.name, v)
 }
 
 // MustSubFS forces creation of a sub-filesystem using fs.Sub. It panics on
